@@ -80,6 +80,8 @@ assets/js/store.js             versioned localStorage persistence
 assets/js/figures.js           six figure primitives
 assets/js/data/units.js        the syllabus map — the single source of scope
 assets/js/data/cases.js        the 26 tickets, reporters, deadlines, boss lines
+assets/js/data/office.js       the simulated colleagues and the office wire
+assets/js/audio.js             synthesised sound — footsteps, heartbeat, flatline
 assets/js/data/concepts-*.js   beat scripts, gates, rubric items
 assets/js/data/papers.js       the three verified papers and mark schemes
 tools/test-*.mjs               the three suites
@@ -94,7 +96,7 @@ Data model: `concept → beats[] → gate → items[] → rubric[]`, and separat
 ```bash
 node tools/test-engine.mjs   # 79 — engine rules and content integrity
 node tools/test-run.mjs      # 52 — damage, healing, XP, ranks, audit, death
-node tools/test-dom.mjs      # 68 — the shift loop, incl. the failure sequence
+node tools/test-dom.mjs      # 96 — the shift loop, HUD, threat card, corridor, card
 node tools/test-a11y.mjs     # 112 — structure, labelling, token contrast
 npx html-validate index.html # the document validates
 ```
@@ -104,7 +106,7 @@ withholds the fix, a failed verification costs exactly the shift's damage, zero
 standing terminates the run, a new shift keeps the death count, a delayed pass
 doubles XP, and the audit report is a diagnostic rather than a score.
 
-Weight: **425 KB raw / 103 KB gzip**, zero third-party requests, no web fonts, no
+Weight: **432 KB raw / 111 KB gzip**, zero third-party requests, no web fonts, no
 images — the failure sequence and every figure is CSS and inline SVG.
 
 ## Where it departs from the specification
