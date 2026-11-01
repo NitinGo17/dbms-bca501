@@ -25,6 +25,8 @@ import {
   publishGate,
 } from "./content.js";
 import { CASES, FLOORS, caseFor, floorFor } from "./data/cases.js";
+import { officeToday } from "./data/office.js";
+import * as sound from "./audio.js";
 import {
   RUN,
   emptyRun,
@@ -38,6 +40,10 @@ import {
   newShift,
   hpState,
   terminationLine,
+  severityInfo,
+  severityPips,
+  hpRangeFor,
+  standingLine,
 } from "./run.js";
 import {
   markAttempt,
@@ -73,6 +79,8 @@ const gate = publishGate();
 let { state, persisted } = loadState();
 let ticker = null;
 let sceneTimer = null;
+let footstepTimer = null;
+let sceneFinish = null;
 let lastRouteKey = null;
 
 const itemStages = new Map();
@@ -178,33 +186,59 @@ function render() {
    HUD
    ========================================================================== */
 
+function avatarFigure() {
+  return `<svg viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+    <rect width="40" height="40" fill="#111a21"/>
+    <circle cx="20" cy="15" r="7" fill="#8fa3b0"/>
+    <path d="M6 40c0-8 6.4-13 14-13s14 5 14 13z" fill="#2c3f4c"/>
+    <path d="M17 22h6l-3 8z" fill="#f0a93c"/>
+  </svg>`;
+}
+
 function renderHud() {
   const run = state.run;
   const hp = hpState(run);
   const rank = rankFor(run.xp);
   const total = CONCEPTS.length;
+  const shift = Math.min(run.day + 1, total);
 
   hud.innerHTML = `
-    <div class="hud__shift">
-      <span>Shift</span>
-      <strong>${String(run.day + 1).padStart(2, "0")}</strong>
-      <span class="muted">/ ${total}</span>
+    <div class="hud__identity">
+      <span class="hud__avatar">${avatarFigure()}</span>
+      <span class="hud__rank">
+        <strong>${esc(rank.name)}</strong>
+        <span class="hud__xp">${run.xp} XP${rank.next ? ` · ${Math.max(0, rank.nextAt - run.xp)} to ${esc(rank.next)}` : " · top of the ladder"}</span>
+      </span>
     </div>
     <div class="hud__vitals">
-      <div class="hp" role="group" aria-label="Standing with the department">
-        <span class="hp__label">HP</span>
-        <span class="hp__track">
-          <span class="hp__fill hp__fill--${hp.state}" style="width:${hp.percent}%"></span>
-        </span>
-        <span class="hp__value">${run.hp}<span class="muted">/${run.maxHp}</span></span>
+      <div class="hud__vitals-top">
+        <div class="hp" role="group" aria-label="Standing with the department: ${run.hp} of ${run.maxHp}">
+          <span>HP</span>
+          <span class="hp__track"><span class="hp__fill hp__fill--${hp.state}" style="width:${hp.percent}%"></span></span>
+          <span class="hp__value">${run.hp}<small>/${run.maxHp}</small></span>
+        </div>
+        <p class="hud__shift">Shift <strong>${String(shift).padStart(2, "0")}</strong> / ${total}</p>
       </div>
-      <p class="hud__rank">
-        <span>Rank</span><strong>${esc(rank.name)}</strong>
-        <span class="muted">${run.xp} xp</span>
-      </p>
+      <span class="hud__standing">${esc(standingLine(run))}</span>
     </div>
-    <a class="hud__audit" href="#/audit">Audit day</a>
-  `;
+    <div class="hud__actions">
+      <button class="hud__btn" type="button" data-sound aria-pressed="${sound.isEnabled()}">${sound.isEnabled() ? "Sound off" : "Sound on"}</button>
+      <a class="hud__btn hud__btn--audit" href="#/audit">Audit day</a>
+    </div>`;
+
+  const soundBtn = hud.querySelector("[data-sound]");
+  if (soundBtn) {
+    soundBtn.addEventListener("click", () => {
+      const on = sound.setEnabled(!sound.isEnabled());
+      if (on) sound.click();
+      renderHud();
+      showToast(
+        on
+          ? "Sound on — footsteps, a heartbeat, a flatline. All synthesised, no files."
+          : "Sound off.",
+      );
+    });
+  }
 }
 
 /* ==========================================================================
@@ -278,56 +312,92 @@ function colophon() {
   </footer>`;
 }
 
-function nodeFor(concept, indexInUnit, unitId) {
+function nodeFor(concept) {
   const status = chunkStatus(state, concept.id);
   const c = caseFor(concept.id);
+  const levelIndex = levelIndexFor(concept.id);
   const locked = status === "locked";
-  const failed = state.run.cleared[concept.id] === undefined && state.concepts[concept.id]?.status === "check-pending";
+  const failed =
+    !locked && status !== "complete" && state.concepts[concept.id]?.status === "check-pending";
   const cls = locked ? "locked" : status === "complete" ? "cleared" : failed ? "failed" : "current";
   const tag = locked ? "div" : "a";
   const attrs = locked ? 'aria-disabled="true"' : `href="#/case/${concept.id}"`;
   return `<li>
     <${tag} class="node node--${cls}" ${attrs}>
-      <span class="node__no">${String(levelIndexFor(concept.id)).padStart(2, "0")}</span>
-      <span>
-        <span class="node__title">${esc(concept.title)}</span>
-        <span class="node__ticket">${esc(c ? c.ticket : "")}${locked ? " · locked" : status === "complete" ? " · cleared" : ""}</span>
+      <span class="node__top">
+        <span class="node__no">${String(levelIndex).padStart(2, "0")}</span>
+        <span class="node__dot" aria-hidden="true"></span>
       </span>
+      <span class="node__title">${esc(concept.title)}</span>
+      <span class="node__ticket">${esc(c ? c.ticket : "")}${locked ? " · locked" : status === "complete" ? " · cleared" : ""}</span>
+      <span class="node__cost">−${damageFor(levelIndex)} HP if failed</span>
     </${tag}>
   </li>`;
 }
 
-function ticketBlock(concept) {
-  const c = caseFor(concept.id);
-  if (!c) return "";
-  return `<div class="ticket">
-    <div class="ticket__head">
-      <span class="ticket__id">Ticket ${esc(c.ticket)}</span>
-      <span>${esc(SUBJECT.code)} · ${esc(floorFor(concept.unit).name)}</span>
+function floorCard(unitId) {
+  const floor = floorFor(unitId);
+  const unit = UNIT_BY_ID[unitId];
+  const progress = unitProgress(state, unitId);
+  const range = hpRangeFor(unitConcepts(unitId).map((c) => levelIndexFor(c.id)));
+  return `<section class="floor floor--${esc(floor.id)}" aria-labelledby="floor-${esc(floor.id)}">
+    <div class="floor__head">
+      <span class="floor__num" aria-hidden="true">${esc(floor.numeral)}</span>
+      <div>
+        <h2 class="floor__title" id="floor-${esc(floor.id)}">Floor ${esc(floor.numeral)} · ${esc(floor.name)}</h2>
+        <p class="floor__blurb">${esc(floor.blurb)}</p>
+      </div>
+      <p class="floor__meta">
+        <span>${progress.done}/${progress.total} cleared</span>
+        <span>−${range.from} to −${range.to} HP</span>
+      </p>
     </div>
-    <div class="ticket__body">
-      <div class="ticket__row"><span class="ticket__key">Reported by</span><span class="ticket__val">${esc(c.reporter)}</span></div>
-      <div class="ticket__row"><span class="ticket__key">Fault</span><span class="ticket__val">${esc(c.subject)}</span></div>
-      <div class="ticket__row"><span class="ticket__key">Deadline</span><span class="ticket__val">${esc(c.deadline)}</span></div>
-      <div class="ticket__row"><span class="ticket__key">If it stays open</span><span class="ticket__val ticket__stake">${esc(c.stake)}</span></div>
-      <div class="ticket__row"><span class="ticket__key">Your toolset</span><span class="ticket__val">${esc(c.toolset)}</span></div>
+    <div class="floor__body">
+      <ul class="map">${unitConcepts(unitId).map((c) => nodeFor(c)).join("")}</ul>
     </div>
-  </div>`;
+    <p class="floor__foot">${esc(unit.weightBasis)}</p>
+  </section>`;
 }
 
-function threatMeter(levelIndex) {
-  const damage = damageFor(levelIndex);
-  const width = Math.min(100, Math.round((damage / 40) * 100));
-  return `<div class="threat">
-    <span>Fail this shift</span>
-    <span class="threat__track"><span class="threat__fill" style="width:${width}%"></span></span>
-    <span>−${damage} HP</span>
-  </div>`;
+function renderOffice() {
+  const { colleagues, wire } = officeToday(new Date());
+  return `<section class="office" aria-labelledby="office-heading">
+    <div>
+      <h2 id="office-heading">The office</h2>
+      <p class="office__lede">Simulated colleagues. There is no server in this build, so nobody here is a real player; they work the same tickets on a schedule fixed by the calendar, and every device sees the same roster.</p>
+      <p class="office__label">Head count</p>
+      <table class="roster">
+        <caption class="visually-hidden">Colleagues, their roles, and the shift they have reached</caption>
+        <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Shift</th></tr></thead>
+        <tbody>
+          ${colleagues
+            .map(
+              (person) => `<tr>
+                <td>${esc(person.name)}<span class="npc">NPC</span></td>
+                <td>${esc(person.role)}</td>
+                <td class="tabular">${String(person.shift).padStart(2, "0")}</td>
+              </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <p class="office__label">Office wire</p>
+      <ul class="wire">
+        ${wire
+          .map(
+            (entry) => `<li>
+              <span class="wire__at">${esc(entry.at)}</span>
+              <span class="wire__who">${esc(entry.who)}</span>
+              <span class="${entry.kind === "note" ? "wire__note" : ""}">${esc(entry.text)}</span>
+            </li>`,
+          )
+          .join("")}
+      </ul>
+    </div>
+  </section>`;
 }
-
-/* ==========================================================================
-   The building
-   ========================================================================== */
 
 function renderHome() {
   const run = state.run;
@@ -339,11 +409,11 @@ function renderHome() {
     <div class="view view--wide">
       <header class="stack">
         <p class="eyebrow">${esc(SUBJECT.university)} · ${esc(SUBJECT.code)}</p>
-        <h1 style="font-size:var(--text-3xl)">The exam cell</h1>
-        <p class="lede">You are the new database administrator. ${CONCEPTS.length} tickets are open across five floors. Each one is a real fault in the college's records, and each one is a piece of the syllabus. Fail a shift and the manager comes down the aisle.</p>
+        <h1 style="font-size:var(--text-2xl)">The exam cell</h1>
+        <p class="lede">You are the new database administrator. ${CONCEPTS.length} tickets are open across five floors, and each one is a real fault in the college's records. Fail a shift and the manager comes down the aisle.</p>
       </header>
 
-      <div class="card stack" style="margin-block-start:var(--space-5)">
+      <div class="card stack" style="margin-block-start:var(--space-4)">
         <div class="card__head">
           <p class="eyebrow">Where you stand</p>
           <p class="small muted">${cleared} of ${CONCEPTS.length} cleared · ${run.deaths} run${run.deaths === 1 ? "" : "s"} ended</p>
@@ -357,26 +427,8 @@ function renderHome() {
         </p>
       </div>
 
-      ${FLOORS.map((floor) => {
-        const unit = UNIT_BY_ID[floor.unit];
-        const progress = unitProgress(state, floor.unit);
-        return `<section class="floor" aria-labelledby="floor-${floor.id}">
-          <div class="floor__head">
-            <div>
-              <p class="floor__num">Floor ${esc(floor.numeral)}</p>
-              <h2 class="floor__title" id="floor-${floor.id}">${esc(floor.name)}</h2>
-              <p class="floor__blurb">${esc(floor.blurb)}</p>
-            </div>
-            <p class="small muted tabular">${progress.done}/${progress.total}</p>
-          </div>
-          <ul class="map">
-            ${unitConcepts(floor.unit)
-              .map((concept, i) => nodeFor(concept, i, floor.unit))
-              .join("")}
-          </ul>
-          <p class="small muted" style="margin-block-start:var(--space-3)">${esc(unit.weightBasis)}</p>
-        </section>`;
-      }).join("")}
+      ${UNITS.map((unit) => floorCard(unit.id)).join("")}
+      ${renderOffice()}
       ${colophon()}
     </div>`;
 }
@@ -398,11 +450,9 @@ function renderFloor(unitId) {
         <p class="small muted">${esc(floor.blurb)}</p>
       </header>
 
-      <ul class="map" style="margin-block-start:var(--space-5)">
-        ${unitConcepts(unitId).map((c, i) => nodeFor(c, i, unitId)).join("")}
-      </ul>
+      ${floorCard(unitId)}
 
-      <div class="card" style="margin-block-start:var(--space-6)">
+      <div class="card" style="margin-block-start:var(--space-5)">
         <p class="eyebrow">Retrieval set</p>
         <p style="margin-block-start:var(--space-2)">Ten items drawn only from this floor${hasEarlier ? `, at least ${pct(SCHEDULE.interleaveRatio)} interleaved from floors you have already worked` : ""}.</p>
         <p style="margin-block-start:var(--space-3)">
@@ -418,6 +468,58 @@ function renderFloor(unitId) {
 /* ==========================================================================
    The case desk
    ========================================================================== */
+
+function bossPortrait() {
+  return `<svg viewBox="0 0 64 74" aria-hidden="true" focusable="false">
+    <rect width="64" height="74" fill="#111a21"/>
+    <circle cx="32" cy="26" r="13" fill="#0a1014"/>
+    <circle cx="27" cy="25" r="2.2" fill="#f0665a"/>
+    <circle cx="37" cy="25" r="2.2" fill="#f0665a"/>
+    <path d="M32 39l-6 4v31h12V43z" fill="#1b2830"/>
+    <path d="M26 43h12l-6 12z" fill="#f0665a" opacity=".85"/>
+    <path d="M14 48c0-3 5-5 12-5v26H14zM50 48c0-3-5-5-12-5v26h12z" fill="#0d151a"/>
+  </svg>`;
+}
+
+function ticketBlock(concept) {
+  const c = caseFor(concept.id);
+  if (!c) return "";
+  const floor = floorFor(concept.unit);
+  return `<div class="ticket">
+    <div class="ticket__head">
+      <span>Ticket ${esc(c.ticket)}</span>
+      <span>${esc(SUBJECT.code)} · ${esc(floor.name)}</span>
+    </div>
+    <div class="ticket__body">
+      <div class="ticket__row"><span class="ticket__key">Reported by</span><span class="ticket__val">${esc(c.reporter)}</span></div>
+      <div class="ticket__row"><span class="ticket__key">Fault</span><span class="ticket__val">${esc(c.subject)}</span></div>
+      <div class="ticket__row"><span class="ticket__key">Deadline</span><span class="ticket__val">${esc(c.deadline)}</span></div>
+      <div class="ticket__row"><span class="ticket__key">If it stays open</span><span class="ticket__val ticket__val--stake">${esc(c.stake)}</span></div>
+      <div class="ticket__row"><span class="ticket__key">Your toolset</span><span class="ticket__val">${esc(c.toolset)}</span></div>
+    </div>
+  </div>`;
+}
+
+function threatCard(levelIndex) {
+  const damage = damageFor(levelIndex);
+  const sev = severityInfo(severityFor(levelIndex));
+  const pips = severityPips(sev.n);
+  return `<div class="threat">
+    <div class="threat__grid">
+      <span class="threat__portrait">${bossPortrait()}</span>
+      <div>
+        <p class="threat__label">If this fix fails</p>
+        <p class="threat__warning" style="margin-block-start:var(--space-2)"><strong>${esc(sev.name)}.</strong> ${esc(sev.line)}</p>
+        <p class="threat__pips">
+          <span class="pips" aria-hidden="true">${pips.map((on) => `<span data-on="${on}"></span>`).join("")}</span>
+          <span>Severity ${sev.n} of 5</span>
+        </p>
+      </div>
+      <p class="threat__damage">−${damage} HP</p>
+    </div>
+    <div class="threat__bar"><span style="width:${Math.min(100, Math.round((damage / 40) * 100))}%"></span></div>
+  </div>`;
+}
 
 function renderCase(conceptId) {
   const concept = CONCEPT_BY_ID[conceptId];
@@ -460,13 +562,13 @@ function renderCase(conceptId) {
 
   return `
     <div class="view">
-      <header class="stack">
+      <header>
         <p class="eyebrow">Floor ${esc(floor.numeral)} · ${esc(floor.name)} · shift ${String(levelIndex).padStart(2, "0")} of ${CONCEPTS.length}</p>
-        <h1 style="font-size:var(--text-2xl)">${esc(concept.title)}</h1>
+        <h1 class="case-title">${esc(concept.title)}</h1>
       </header>
 
-      <div style="margin-block-start:var(--space-4)">${ticketBlock(concept)}</div>
-      <div style="margin-block-start:var(--space-3)">${threatMeter(levelIndex)}</div>
+      ${ticketBlock(concept)}
+      ${threatCard(levelIndex)}
 
       <div class="script" style="margin-block-start:var(--space-5)">
         ${concept.beats.slice(0, 2).map(renderBeat).join("")}
@@ -680,23 +782,45 @@ function renderItemCard(item, { isExit }) {
    ========================================================================== */
 
 function bossFigure() {
-  return `<svg viewBox="0 0 200 320" role="img" aria-label="A figure in a suit standing at the end of the corridor">
+  return `<svg viewBox="0 0 120 260" aria-hidden="true" focusable="false">
     <defs>
-      <linearGradient id="bossBody" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#1b2126"/>
-        <stop offset="1" stop-color="#05080a"/>
+      <linearGradient id="bossCoat" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#1a252d"/>
+        <stop offset="1" stop-color="#080d11"/>
       </linearGradient>
     </defs>
-    <ellipse cx="100" cy="310" rx="62" ry="10" fill="#000" opacity=".55"/>
-    <path d="M100 34c19 0 31 14 31 33s-12 34-31 34-31-15-31-34 12-33 31-33z" fill="#05080a"/>
-    <path d="M64 106h72l18 60-16 8-6-22v150H68V152l-6 22-16-8z" fill="url(#bossBody)"/>
-    <path d="M100 106l-9 22 9 26 9-26z" fill="#2b343b"/>
-    <path d="M88 112l12 18 12-18" fill="none" stroke="#3b464e" stroke-width="2"/>
-    <rect x="126" y="176" width="34" height="44" rx="2" fill="#141a1f" stroke="#2b343b" stroke-width="2"/>
-    <path d="M132 184h22M132 192h22M132 200h14" stroke="#3b464e" stroke-width="2"/>
-    <circle cx="88" cy="66" r="3" fill="#e0604e"/>
-    <circle cx="112" cy="66" r="3" fill="#e0604e"/>
+    <ellipse cx="60" cy="252" rx="34" ry="6" fill="#000" opacity=".5"/>
+    <path d="M60 18c11 0 18 9 18 21s-7 21-18 21-18-9-18-21 7-21 18-21z" fill="#0a1014"/>
+    <circle cx="52" cy="40" r="2.6" fill="#f0665a"/>
+    <circle cx="68" cy="40" r="2.6" fill="#f0665a"/>
+    <path d="M38 62h44l12 34-10 5-4-14v96H40V87l-4 14-10-5z" fill="url(#bossCoat)"/>
+    <path d="M60 62l-6 14 6 16 6-16z" fill="#2c3f4c"/>
+    <path d="M52 66l8 11 8-11" fill="none" stroke="#3d5566" stroke-width="1.6"/>
+    <rect x="74" y="104" width="20" height="26" rx="1.5" fill="#0d151a" stroke="#2c3f4c" stroke-width="1.4"/>
+    <path d="M78 110h12M78 116h12M78 122h8" stroke="#3d5566" stroke-width="1.4"/>
+    <path d="M40 196h40v10H40z" fill="#0d151a"/>
   </svg>`;
+}
+
+function deskFigure() {
+  return `<svg viewBox="0 0 300 150" aria-hidden="true" focusable="false">
+    <rect x="40" y="96" width="220" height="14" fill="#3a2a1e"/>
+    <rect x="40" y="110" width="220" height="40" fill="#241a12"/>
+    <g>
+      <rect x="86" y="66" width="128" height="9" fill="#cfd3d6"/>
+      <rect x="90" y="57" width="120" height="9" fill="#dfe3e6"/>
+      <rect x="94" y="48" width="112" height="9" fill="#eef1f3"/>
+      <rect x="98" y="39" width="104" height="9" fill="#f6f8f9"/>
+      <rect x="118" y="58" width="66" height="16" fill="#c8342a" transform="rotate(-8 151 66)"/>
+      <path d="M126 62h48" stroke="#f4d9d6" stroke-width="1.6" transform="rotate(-8 151 66)"/>
+    </g>
+    <rect x="52" y="86" width="26" height="12" fill="#4a3626"/>
+    <rect x="222" y="86" width="26" height="12" fill="#4a3626"/>
+  </svg>`;
+}
+
+function ecgPath() {
+  return "M0 60 H120 l10 -34 l10 68 l10 -34 H260 l12 -18 l10 30 l10 -12 H420 l10 -40 l10 80 l10 -40 H600 l12 -14 l10 22 l10 -8 H820 l10 -30 l10 60 l10 -30 H1000";
 }
 
 function hideScene() {
@@ -704,6 +828,11 @@ function hideScene() {
     window.clearTimeout(sceneTimer);
     sceneTimer = null;
   }
+  if (footstepTimer) {
+    window.clearInterval(footstepTimer);
+    footstepTimer = null;
+  }
+  sceneFinish = null;
   if (sceneHost) {
     sceneHost.hidden = true;
     sceneHost.innerHTML = "";
@@ -711,74 +840,162 @@ function hideScene() {
 }
 
 /**
- * Plays the failure. Severity scales the approach, the shake, the dialogue and
- * the damage shown; the card arrives at the end of the corridor.
+ * The failure. Three stages: the corridor, the verdict, and — if this killed
+ * the run — the flatline, then the card. Severity scales the approach, the
+ * shake, the dialogue and the name on the card.
  */
 function playFailure({ conceptId, levelIndex, damage, severity, lines, terminated, onRetry }) {
   if (!sceneHost) return;
   const concept = CONCEPT_BY_ID[conceptId];
   const c = concept ? caseFor(concept.id) : null;
   const bossLines = lines && lines.length ? lines : (c ? c.boss : ["I asked for one thing."]);
+  const sev = severityInfo(severity);
+  const hp = hpState(state.run);
+  const cells = Array.from({ length: 22 }, (_, i) => i < Math.round((state.run.hp / state.run.maxHp) * 22));
 
+  hideScene();
   sceneHost.hidden = false;
-  sceneHost.innerHTML = `
-    <div class="scene" style="--sev:${severity}" role="dialog" aria-modal="true" aria-labelledby="scene-title">
-      <div class="scene__world" data-shake="true">
-        <div class="scene__plane"></div>
-        <div class="scene__boss">${bossFigure()}</div>
-      </div>
-      <div class="scene__vignette"></div>
-      <div class="scene__hud">
-        <span>Shift ${String(levelIndex).padStart(2, "0")} · verification failed</span>
-        <span class="scene__damage">−${damage} HP</span>
-      </div>
-      <div class="scene__lines">
-        ${bossLines.map((line) => `<p class="scene__line">${esc(line)}</p>`).join("")}
-      </div>
-      <button class="scene__skip" type="button" data-skip-scene>Skip</button>
+
+  const rings = Array.from(
+    { length: 7 },
+    (_, i) => `<span class="scene__ring" style="--inset:${i * 7};--depth:${i * 40}"></span>`,
+  ).join("");
+
+  const topbar = `
+    <div class="scene__topbar">
+      <span>Shift ${String(levelIndex).padStart(2, "0")} · verification failed</span>
+      <span class="scene__topbar-right">
+        <span>HP</span>
+        <span class="scene__hp" aria-hidden="true">${cells.map((on) => `<span data-empty="${!on}"></span>`).join("")}</span>
+        <span>−${damage} HP</span>
+      </span>
     </div>`;
 
-  const duration = 2400 + severity * 420;
-  const showCard = () => {
+  const controls = `
+    <div class="scene__controls">
+      <button class="scene__control" type="button" data-sound-scene>${sound.isEnabled() ? "Sound off" : "Sound on"}</button>
+      <button class="scene__control" type="button" data-skip-scene>Skip</button>
+    </div>`;
+
+  sceneHost.innerHTML = `
+    <div class="scene" style="--sev:${severity}" role="dialog" aria-modal="true" aria-labelledby="scene-title" aria-describedby="scene-desc">
+      ${topbar}
+      <div class="scene__shake" data-shake="true">
+        <div class="scene__corridor">
+          <div class="scene__floor"></div>
+          ${rings}
+          <div class="scene__lights"></div>
+          <div class="scene__boss">${bossFigure()}</div>
+        </div>
+        <div class="scene__desk">${deskFigure()}</div>
+        <div class="scene__dialogue">
+          ${bossLines.map((line) => `<p class="scene__line">${esc(line)}</p>`).join("")}
+        </div>
+      </div>
+      ${controls}
+    </div>`;
+
+  const scene = sceneHost.querySelector(".scene");
+  const duration = sev.duration;
+
+  if (sound.isEnabled()) {
+    footstepTimer = window.setInterval(() => sound.footstep(severity / 3), 460);
+  }
+
+  const finish = () => {
+    sceneFinish = null;
     if (sceneTimer) {
       window.clearTimeout(sceneTimer);
       sceneTimer = null;
     }
-    const scene = sceneHost.querySelector(".scene");
-    if (!scene) return;
+    if (footstepTimer) {
+      window.clearInterval(footstepTimer);
+      footstepTimer = null;
+    }
+    if (sound.isEnabled()) {
+      if (terminated) sound.flatline(1.6);
+      else sound.heartbeat(severity);
+    }
+    const statLine = terminated
+      ? terminationLine(state.run)
+      : "He signs it off anyway and takes it out of your standing. The ticket is still open.";
     scene.innerHTML = `
+      ${topbar}
+      <div class="scene__ecg" aria-hidden="true">
+        <svg viewBox="0 0 1000 120" preserveAspectRatio="none">
+          <path class="scene__ecg-line" d="${terminated ? ecgPath() : "M0 60 H1000"}"></path>
+        </svg>
+        <span class="scene__ecg-label">${esc(sev.name)}</span>
+      </div>
       <div class="scene__card">
-        <p class="scene__title" id="scene-title">${terminated ? "Shift terminated" : "Shift not signed off"}</p>
-        <p class="scene__sub">${esc(
-          terminated
-            ? terminationLine(state.run)
-            : "The manager signs it off anyway, and takes it out of your standing. The ticket is still open.",
-        )}</p>
+        <p class="scene__kicker">Shift ${String(levelIndex).padStart(2, "0")} · ${esc(sev.name)}</p>
+        <h2 class="scene__title" id="scene-title">${terminated ? "Shift terminated" : "Shift not signed off"}</h2>
+        <p class="scene__sub" id="scene-desc">${esc(statLine)}</p>
         <div class="scene__stats">
           <span>Damage<strong>−${damage}</strong></span>
-          <span>Standing<strong>${state.run.hp}</strong></span>
-          <span>Shift<strong>${String(levelIndex).padStart(2, "0")}</strong></span>
+          <span>HP left<strong>${state.run.hp}</strong></span>
+          <span>Severity<strong class="pips">${severityPips(severity)
+            .map((on) => `<span data-on="${on}"></span>`)
+            .join("")}</strong></span>
         </div>
-        <div class="scene__actions">
+        <div class="row" style="justify-content:center">
           ${terminated
             ? `<a class="btn" href="#/terminated">Start a new shift</a>`
             : `<button class="btn" type="button" data-retry-scene>Back to the ticket</button>`}
         </div>
-      </div>`;
-    const retry = sceneHost.querySelector("[data-retry-scene]");
-    if (retry) {
-      retry.addEventListener("click", () => {
-        hideScene();
-        if (onRetry) onRetry();
-      });
-    }
-    const skipBtn = sceneHost.querySelector("[data-skip-scene]");
-    if (skipBtn) skipBtn.addEventListener("click", showCard);
+      </div>
+      ${controls}`;
+
+    wireSceneControls(scene, { terminated, onRetry });
   };
 
-  const skip = sceneHost.querySelector("[data-skip-scene]");
-  if (skip) skip.addEventListener("click", showCard);
-  sceneTimer = window.setTimeout(showCard, duration * 0.9);
+  const verdict = () => {
+    const dialogue = scene.querySelector(".scene__dialogue");
+    const desk = scene.querySelector(".scene__desk");
+    const corridor = scene.querySelector(".scene__corridor");
+    if (!dialogue) return;
+    if (corridor) corridor.style.opacity = "0.25";
+    if (desk) desk.style.opacity = "0.35";
+    scene.insertAdjacentHTML(
+      "beforeend",
+      `<div class="scene__verdict">
+         <p class="scene__verdict-word">${esc(sev.name)}</p>
+         <p class="scene__verdict-sub">${esc(bossLines[bossLines.length - 1] || "")}</p>
+       </div>`,
+    );
+    if (sound.isEnabled()) sound.heartbeat(severity);
+    sceneTimer = window.setTimeout(finish, 1500);
+  };
+
+  sceneFinish = finish;
+  wireSceneControls(scene, { terminated, onRetry });
+  sceneTimer = window.setTimeout(verdict, duration);
+}
+
+function wireSceneControls(scene, { terminated, onRetry }) {
+  const skip = scene.querySelector("[data-skip-scene]");
+  if (skip) {
+    skip.addEventListener("click", () => {
+      if (sceneFinish) sceneFinish();
+    });
+  }
+
+  const soundBtn = scene.querySelector("[data-sound-scene]");
+  if (soundBtn) {
+    soundBtn.addEventListener("click", () => {
+      const on = sound.setEnabled(!sound.isEnabled());
+      if (on) sound.click();
+      soundBtn.textContent = on ? "Sound off" : "Sound on";
+    });
+  }
+
+  const retry = scene.querySelector("[data-retry-scene]");
+  if (retry) {
+    retry.addEventListener("click", () => {
+      hideScene();
+      if (onRetry) onRetry();
+    });
+  }
 }
 
 /* ==========================================================================
