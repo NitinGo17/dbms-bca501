@@ -6,8 +6,10 @@
  * silently discard a student's history.
  */
 
+import { emptyRun } from "./run.js";
+
 const KEY = "bca501-dbms-state";
-const VERSION = 1;
+const VERSION = 2;
 
 export function emptyState() {
   return {
@@ -18,6 +20,7 @@ export function emptyState() {
     concepts: {},
     mistakes: [],
     exams: [],
+    run: emptyRun(),
     settings: { interleaveRatio: 0.3 },
   };
 }
@@ -54,6 +57,7 @@ function migrate(parsed) {
     concepts: parsed.concepts && typeof parsed.concepts === "object" ? parsed.concepts : {},
     mistakes: Array.isArray(parsed.mistakes) ? parsed.mistakes : [],
     exams: Array.isArray(parsed.exams) ? parsed.exams : [],
+    run: parsed.run && typeof parsed.run === "object" ? { ...emptyRun(), ...parsed.run } : emptyRun(),
   };
 }
 
