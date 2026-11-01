@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://nitingo17.github.io/dbms-bca501/sitemap.xml
