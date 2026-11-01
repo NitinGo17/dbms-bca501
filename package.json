@@ -2,12 +2,13 @@
   "name": "dbms-bca501",
   "version": "1.0.0",
   "private": true,
-  "description": "Syllabus-bounded retrieval practice for BCA-501 Introduction to DBMS",
+  "description": "The Exam Cell \u2014 a survival sim over BCA-501 Introduction to DBMS",
   "type": "module",
   "scripts": {
     "serve": "python3 -m http.server 8000",
-    "test": "node tools/test-engine.mjs && node tools/test-dom.mjs && node tools/test-a11y.mjs",
+    "test": "node tools/test-engine.mjs && node tools/test-run.mjs && node tools/test-dom.mjs && node tools/test-a11y.mjs",
     "test:engine": "node tools/test-engine.mjs",
+    "test:run": "node tools/test-run.mjs",
     "test:dom": "node tools/test-dom.mjs",
     "test:a11y": "node tools/test-a11y.mjs"
   },
