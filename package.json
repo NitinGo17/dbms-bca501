@@ -1,0 +1,18 @@
+{
+  "name": "dbms-bca501",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Syllabus-bounded retrieval practice for BCA-501 Introduction to DBMS",
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8000",
+    "test": "node tools/test-engine.mjs && node tools/test-dom.mjs && node tools/test-a11y.mjs",
+    "test:engine": "node tools/test-engine.mjs",
+    "test:dom": "node tools/test-dom.mjs",
+    "test:a11y": "node tools/test-a11y.mjs"
+  },
+  "devDependencies": {
+    "html-validate": "^10.17.0",
+    "linkedom": "^0.18.0"
+  }
+}
