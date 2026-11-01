@@ -210,3 +210,73 @@ export function terminationLine(run) {
   if (day >= 4) return "You lasted a few days. The exam cell has seen shorter.";
   return "One shift. The manager did not even learn your name.";
 }
+
+/* -------------------------------------------------------------------------
+   Severity — what the manager calls it, and what it costs you
+   ------------------------------------------------------------------------- */
+
+/**
+ * Five levels of trouble. The name is what the game-over card calls the shift;
+ * the line is what he says while he is standing at your desk. Severity rises
+ * with the shift number, so a late failure is a Final notice and an early one
+ * is only a Verbal warning.
+ */
+export const SEVERITIES = [
+  {
+    n: 1,
+    name: "Verbal warning",
+    line: "He taps your desk twice. It goes on your file.",
+    duration: 2400,
+  },
+  {
+    n: 2,
+    name: "Written warning",
+    line: "He writes it down in front of you and does not look up.",
+    duration: 2900,
+  },
+  {
+    n: 3,
+    name: "Performance review",
+    line: "Someone from administration sits in. Nobody offers you a chair.",
+    duration: 3400,
+  },
+  {
+    n: 4,
+    name: "Last chance",
+    line: "He says the word suspension, then says he did not say it.",
+    duration: 3900,
+  },
+  {
+    n: 5,
+    name: "Final notice",
+    line: "Twelve noon. The results are due at twelve noon.",
+    duration: 4500,
+  },
+];
+
+export function severityInfo(n) {
+  return SEVERITIES[Math.max(1, Math.min(5, n)) - 1];
+}
+
+/** The HP a whole floor can cost, from its first shift to its last. */
+export function hpRangeFor(levelIndexes) {
+  if (!levelIndexes.length) return { from: 0, to: 0 };
+  const values = levelIndexes.map((i) => damageFor(i));
+  return { from: Math.min(...values), to: Math.max(...values) };
+}
+
+/** Five pips, filled to the severity — the card's "Severity 1 of 5". */
+export function severityPips(n) {
+  return Array.from({ length: 5 }, (_, i) => i < n);
+}
+
+/** A one-line read on standing, for under the health bar. */
+export function standingLine(run) {
+  const { percent } = hpState(run);
+  if (run.status === "terminated") return "You no longer work here.";
+  if (percent >= 90) return "Standing is stable.";
+  if (percent >= 70) return "Someone has noticed.";
+  if (percent >= 50) return "The manager is keeping a file.";
+  if (percent >= 25) return "One more bad shift and this is over.";
+  return "HR have started typing.";
+}
