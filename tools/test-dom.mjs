@@ -115,6 +115,13 @@ check("the HUD shows the seeded low health", hudText().includes("5"), hudText())
 check("the HUD shows the shift number", hudText().toLowerCase().includes("shift"));
 check("the HUD shows a rank", hudText().includes("Intern"));
 check("the HUD offers audit day", Boolean(hudEl().querySelector('a[href="#/audit"]')));
+check("the HUD shows an avatar", Boolean(hudEl().querySelector(".hud__avatar svg")));
+check("the HUD shows XP toward the next rank", /XP/.test(hudText()));
+check("the HUD shows the shift out of the total", /Shift\s*01\s*\/\s*26/.test(hudText().replace(/\s+/g, " ")));
+check("the HUD shows a standing line", Boolean(hudEl().querySelector(".hud__standing")));
+check("the HUD has a sound toggle that starts off",
+  hudEl().querySelector("[data-sound]").getAttribute("aria-pressed") === "false");
+check("the sound toggle is labelled", hudEl().querySelector("[data-sound]").textContent.trim() === "Sound on");
 
 /* ---- 2. The building --------------------------------------------------- */
 
@@ -124,6 +131,14 @@ check("the building lists five floors",
 check("tickets are numbered", Boolean(q(".node__no")));
 check("tickets carry a ticket number", text().includes("#1041"));
 check("later tickets are locked", Boolean(q(".node--locked")));
+check("floors are numbered in a box", qa(".floor__num").length === 5);
+check("each floor states its cleared count and HP range",
+  /0\/5 cleared/.test(text()) && /−9 to −13 HP/.test(text()));
+check("each ticket states what failing it costs", text().includes("−9 HP if failed"));
+check("a locked ticket is dashed and dimmed, not hidden", Boolean(q(".node--locked")) && text().includes("locked"));
+check("the office names three simulated colleagues", qa(".roster tbody tr").length === 3);
+check("colleagues are marked as NPCs", qa(".npc").length === 3);
+check("the office wire carries entries", qa(".wire li").length > 0);
 
 /* ---- 3. A locked ticket refuses --------------------------------------- */
 
@@ -139,7 +154,15 @@ check("the reporter is named", text().includes("Exam Cell clerk"));
 check("the deadline is stated", text().includes("4 hours"));
 check("the stake is stated", text().includes("fined under a name"));
 check("the toolset is named", text().includes("Redundancy"));
-check("the threat meter states the damage", text().includes("−9 HP"));
+check("the threat card states the damage", text().includes("−9 HP"));
+check("the case title sits in a frame", Boolean(q(".case-title")));
+check("the ticket header is the amber bar", Boolean(q(".ticket__head")));
+check("the threat card carries the manager's portrait", Boolean(q(".threat__portrait svg")));
+check("the threat card names the warning", text().includes("Verbal warning"));
+check("the threat card shows five severity pips", qa(".threat__pips .pips span").length === 5);
+check("one severity pip is filled on shift 1",
+  qa(".threat__pips .pips span[data-on='true']").length === 1);
+check("the threat card states the severity in text", text().includes("Severity 1 of 5"));
 check("the manager's question renders", qa("[data-gate-option]").length === 4);
 check("the fix is withheld before the question", !text().includes("Store the name once"));
 check("verification is withheld before the question", !q("[data-item]"));
@@ -183,10 +206,19 @@ check("the sequence is a labelled modal dialog",
   sceneEl().querySelector("[role='dialog'][aria-modal='true'][aria-labelledby]") !== null);
 check("the sequence's skip control is a real button",
   sceneEl().querySelector("[data-skip-scene]").tagName === "BUTTON");
+check("the corridor is drawn in perspective rings", sceneEl().querySelectorAll(".scene__ring").length >= 5);
+check("the desk is in the foreground", Boolean(sceneEl().querySelector(".scene__desk svg")));
+check("the manager is on screen", Boolean(sceneEl().querySelector(".scene__boss svg")));
+check("the sequence has a sound toggle", Boolean(sceneEl().querySelector("[data-sound-scene]")));
+check("the sequence states the shift and the failure", /Shift 01/.test(sceneEl().textContent));
 
 click(sceneEl().querySelector("[data-skip-scene]"));
 check("skipping lands on the card", sceneEl().textContent.includes("Shift terminated"));
 check("the card offers a new shift", Boolean(sceneEl().querySelector('a[href="#/terminated"]')));
+check("the card names the warning level", /Final notice|Verbal warning|Written warning|Performance review|Last chance/.test(sceneEl().textContent));
+check("the card reports damage, HP left and severity",
+  sceneEl().textContent.includes("Damage") && sceneEl().textContent.includes("HP left") && sceneEl().textContent.includes("Severity"));
+check("the card draws an ECG", Boolean(sceneEl().querySelector(".scene__ecg svg")));
 
 /* ---- 7. The game-over page ------------------------------------------- */
 
